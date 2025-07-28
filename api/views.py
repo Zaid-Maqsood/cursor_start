@@ -58,7 +58,8 @@ class ChatView(APIView):
             # Get response from OpenAI
             response = openai.ChatCompletion.create(
                 model="gpt-4o",
-                messages=session_history[session_id]
+                messages=session_history[session_id],
+                max_tokens=1000  # Limit response length
             )
 
             assistant_message = response.choices[0].message
@@ -75,6 +76,10 @@ class ChatView(APIView):
                         reply += part["text"] + "\n"
             else:
                 reply = assistant_message["content"]
+
+            # Truncate response if it's too long (additional safety)
+            if len(reply) > 2000:
+                reply = reply[:2000] + "..."
 
         except Exception as e:
             reply = f"Error: {str(e)}"
