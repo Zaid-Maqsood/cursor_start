@@ -4,7 +4,6 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from django.core.files.storage import default_storage
 from uuid import uuid4
 from decouple import config
 
@@ -19,43 +18,68 @@ class ChatView(APIView):
 
     def post(self, request):
         session_id = request.data.get('session_id') or str(uuid4())
-        user_message = request.data.get('message', '')
+        user_message = request.data.get('message', '').strip()
         image_file = request.FILES.get('image', None)
 
-        # Initialize history if not exists
+        # Initialize chat history if not present
         if session_id not in session_history:
-            session_history[session_id] = [{"role": "system", "content": "You are a helpful assistant."}]
+            session_history[session_id] = [{
+                "role": "system",
+                "content": [{"type": "text", "text": "Identify the food items and estimate the nutritional value (e.g., calories, carbs, protein, fats) per serving for each item visible. Respond in a clean, readable format."}]
+            }]
 
         try:
+            user_content = []
+
+            if user_message:
+                user_content.append({"type": "text", "text": user_message})
+
             if image_file:
                 image_data = base64.b64encode(image_file.read()).decode("utf-8")
                 image_base64 = f"data:{image_file.content_type};base64,{image_data}"
+                user_content.append({"type": "image_url", "image_url": {"url": image_base64}})
 
+                # If no text provided, add default text prompt
                 if not user_message:
-                    user_message = "Analyze this screenshot and describe the user's query based on image"
+                    user_content.insert(0, {"type": "text", "text": "Analyse this image of food and explicitly estimate calories, protein, carbohydrates, fats, and other key nutrients present in the portion shown."})
 
-                session_history[session_id].append({
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_message},
-                        {"type": "image_url", "image_url": {"url": image_base64}}
-                    ]
-                })
-            else:
-                session_history[session_id].append({"role": "user", "content": user_message})
+            # Append user message in correct format
+            session_history[session_id].append({
+                "role": "user",
+                "content": user_content
+            })
 
+            # (Optional) Debug logs
+            print("\nSession ID:", session_id)
+            print("Formatted session history being sent to OpenAI:\n")
+            import json
+            print(json.dumps(session_history[session_id], indent=2))
+
+            # Get response from OpenAI
             response = openai.ChatCompletion.create(
                 model="gpt-4o",
                 messages=session_history[session_id]
             )
 
-            reply = response.choices[0].message['content']
-            session_history[session_id].append({"role": "assistant", "content": reply})
+            assistant_message = response.choices[0].message
+            session_history[session_id].append({
+                "role": "assistant",
+                "content": assistant_message["content"]
+            })
+
+            # Convert response content to string for frontend
+            reply = ""
+            if isinstance(assistant_message["content"], list):
+                for part in assistant_message["content"]:
+                    if part["type"] == "text":
+                        reply += part["text"] + "\n"
+            else:
+                reply = assistant_message["content"]
 
         except Exception as e:
             reply = f"Error: {str(e)}"
 
         return Response({
-            'response': reply,
+            'response': reply.strip(),
             'session_id': session_id
         }, status=status.HTTP_200_OK)

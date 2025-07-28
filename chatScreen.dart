@@ -4,6 +4,7 @@ import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart'; // For MediaType
+import 'package:uuid/uuid.dart'; // For session ID
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({Key? key}) : super(key: key);
@@ -18,7 +19,15 @@ class _ChatScreenState extends State<ChatScreen> {
   html.File? _selectedImage;
   Uint8List? _imageBytes;
 
-  final String backendUrl = 'http://127.0.0.1:8000/api/chat/';
+  final Uri backendUrl = Uri.parse("https://mzaid.pythonanywhere.com/api/chat/");
+  late String sessionId;
+
+  @override
+  void initState() {
+    super.initState();
+    // Generate a unique session ID for this chat session
+    sessionId = const Uuid().v4();
+  }
 
   Future<void> _pickImage() async {
     final uploadInput = html.FileUploadInputElement();
@@ -41,7 +50,34 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendMessage() async {
     final message = _controller.text.trim();
+    print('Message: $message');
+    print('Image selected:  [32m${_selectedImage != null} [0m');
+    if (_selectedImage != null && _imageBytes != null) {
+      print('Image filename: ${_selectedImage!.name}');
+      print('Image bytes length: ${_imageBytes!.length}');
+    }
+
     if (message.isEmpty && _imageBytes == null) return;
+
+    final uri = backendUrl;
+    var request = http.MultipartRequest('POST', uri);
+    request.fields['message'] = message;
+    request.fields['session_id'] = sessionId;
+
+    if (_selectedImage != null && _imageBytes != null) {
+      final stream = http.ByteStream.fromBytes(_imageBytes!);
+      final length = _imageBytes!.length;
+      request.files.add(http.MultipartFile(
+        'image',
+        stream,
+        length,
+        filename: _selectedImage!.name,
+        contentType: MediaType('image', 'jpeg'),
+      ));
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
 
     setState(() {
       _messages.add({'role': 'user', 'content': message, 'image': _imageBytes});
@@ -49,31 +85,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _selectedImage = null;
       _imageBytes = null;
     });
-
-    var uri = Uri.parse(backendUrl);
-    var request = http.MultipartRequest('POST', uri);
-    request.fields['message'] = message;
-
-    if (_imageBytes != null && _selectedImage != null) {
-      // Try to detect the content type from the file name
-      String? mimeType = _selectedImage!.type;
-      String mainType = 'image';
-      String subType = 'jpeg';
-      if (mimeType != null && mimeType.contains('/')) {
-        final parts = mimeType.split('/');
-        mainType = parts[0];
-        subType = parts[1];
-      }
-      request.files.add(http.MultipartFile.fromBytes(
-        'image',
-        _imageBytes!,
-        filename: _selectedImage!.name,
-        contentType: MediaType(mainType, subType),
-      ));
-    }
-
-    final streamedResponse = await request.send();
-    final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
