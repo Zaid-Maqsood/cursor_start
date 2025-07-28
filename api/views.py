@@ -41,7 +41,7 @@ class ChatView(APIView):
 
                 # If no text provided, add default text prompt
                 if not user_message:
-                    user_content.insert(0, {"type": "text", "text": "Analyse this image of food and explicitly estimate calories, protein, carbohydrates, fats, and other key nutrients present in the portion shown."})
+                    user_content.insert(0, {"type": "text", "text": "Analyse this image of food and describe the food in it and explicitly estimate calories, protein, carbohydrates, fats, and other key nutrients present in the portion shown."})
 
             # Append user message in correct format
             session_history[session_id].append({
