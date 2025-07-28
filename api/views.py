@@ -25,7 +25,7 @@ class ChatView(APIView):
         if session_id not in session_history:
             session_history[session_id] = [{
                 "role": "system",
-                "content": [{"type": "text", "text": "Identify the food items and estimate the nutritional value (e.g., calories, carbs, protein, fats) per serving for each item visible. Respond in a clean, readable format."}]
+                "content": [{"type": "text", "text": "You are a helpful assistant."}]
             }]
 
         try:
