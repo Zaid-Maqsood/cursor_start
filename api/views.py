@@ -6,6 +6,8 @@ from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from uuid import uuid4
 from decouple import config
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 
 openai.api_key = config('OPENAI_API_KEY')
@@ -16,6 +18,7 @@ session_history = {}
 # Limit to last 10 exchanges to avoid "message too long"
 MAX_EXCHANGES = 15
 
+@method_decorator(csrf_exempt, name='dispatch')
 class ChatView(APIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
