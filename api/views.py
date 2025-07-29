@@ -76,9 +76,9 @@ class ChatView(APIView):
 
             # Call OpenAI
             response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=session_history[session_id],
-                max_tokens=8000
+                max_tokens=1000
             )
 
             assistant_message = response.choices[0].message
