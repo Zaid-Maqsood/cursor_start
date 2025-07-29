@@ -3,8 +3,8 @@ import 'dart:typed_data';
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart'; // For MediaType
-import 'package:uuid/uuid.dart'; // For session ID
+import 'package:http_parser/http_parser.dart';
+import 'session_manager.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({Key? key}) : super(key: key);
@@ -13,20 +13,62 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
+  final ScrollController _scrollController = ScrollController();
   html.File? _selectedImage;
   Uint8List? _imageBytes;
+  bool _isSending = false;
+  
+  late AnimationController _fadeController;
+  late AnimationController _slideController;
+  late Animation<double> _fadeAnimation;
+  late Animation<Offset> _slideAnimation;
 
   final Uri backendUrl = Uri.parse("https://mzaid.pythonanywhere.com/api/chat/");
-  late String sessionId;
 
   @override
   void initState() {
     super.initState();
-    // Generate a unique session ID for this chat session
-    sessionId = const Uuid().v4();
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _slideController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
+    );
+    
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.2),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic));
+    
+    _fadeController.forward();
+    _slideController.forward();
+  }
+
+  @override
+  void dispose() {
+    _fadeController.dispose();
+    _slideController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   Future<void> _pickImage() async {
@@ -49,20 +91,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
+    if (_isSending) return;
+    if (_controller.text.trim().isEmpty && _imageBytes == null) return;
+    
+    setState(() {
+      _isSending = true;
+    });
+
     final message = _controller.text.trim();
-    print('Message: $message');
-    print('Image selected:  [32m${_selectedImage != null} [0m');
-    if (_selectedImage != null && _imageBytes != null) {
-      print('Image filename: ${_selectedImage!.name}');
-      print('Image bytes length: ${_imageBytes!.length}');
-    }
 
-    if (message.isEmpty && _imageBytes == null) return;
-
-    final uri = backendUrl;
-    var request = http.MultipartRequest('POST', uri);
+    var request = http.MultipartRequest('POST', backendUrl);
+    request.headers['Content-Type'] = 'multipart/form-data';
     request.fields['message'] = message;
-    request.fields['session_id'] = sessionId;
+    request.fields['session_id'] = SessionManager.sessionId;
 
     if (_selectedImage != null && _imageBytes != null) {
       final stream = http.ByteStream.fromBytes(_imageBytes!);
@@ -76,9 +117,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ));
     }
 
-    final streamedResponse = await request.send();
-    final response = await http.Response.fromStream(streamedResponse);
-
     setState(() {
       _messages.add({'role': 'user', 'content': message, 'image': _imageBytes});
       _controller.clear();
@@ -86,15 +124,50 @@ class _ChatScreenState extends State<ChatScreen> {
       _imageBytes = null;
     });
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
+    // Scroll to bottom after adding user message
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+
+    try {
+      print('Sending request to: $backendUrl');
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      print('Response status: ${response.statusCode}');
+      print('Response body length: ${response.body.length}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        String responseText = data['response'] ?? 'No response received';
+        
+        print('Response text length: ${responseText.length}');
+        
+        // Truncate response if it's too long
+        if (responseText.length > 3000) {
+          responseText = responseText.substring(0, 3000) + '...\n\n[Response truncated due to length]';
+        }
+        
+        setState(() {
+          _messages.add({'role': 'ai', 'content': responseText});
+        });
+      } else {
+        print('Error status code: ${response.statusCode}');
+        print('Error response: ${response.body}');
+        setState(() {
+          _messages.add({'role': 'ai', 'content': 'Error: Server returned status ${response.statusCode} 😢'});
+        });
+      }
+    } catch (e) {
+      print('Network error: $e');
       setState(() {
-        _messages.add({'role': 'ai', 'content': data['response']});
+        _messages.add({'role': 'ai', 'content': 'Network error: Please check your connection 🌐\nError: $e'});
       });
-    } else {
+    } finally {
       setState(() {
-        _messages.add({'role': 'ai', 'content': 'Error: Could not get reply 😢'});
+        _isSending = false;
       });
+      
+      // Scroll to bottom after AI response
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
   }
 
@@ -105,6 +178,7 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
         padding: const EdgeInsets.all(10),
+        constraints: const BoxConstraints(maxWidth: 300),
         decoration: BoxDecoration(
           color: isUser ? Colors.blue[100] : Colors.grey[200],
           borderRadius: BorderRadius.circular(10),
@@ -121,9 +195,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 fit: BoxFit.cover,
               ),
             if (message['content'] != '')
-              Text(
-                message['content'],
-                style: const TextStyle(fontSize: 16),
+              Flexible(
+                child: Text(
+                  message['content'],
+                  style: const TextStyle(fontSize: 16),
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                ),
               ),
           ],
         ),
