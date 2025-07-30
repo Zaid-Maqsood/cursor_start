@@ -18,11 +18,23 @@ session_history = {}
 # Limit to last 10 exchanges to avoid "message too long"
 MAX_EXCHANGES = 15
 
+# Maximum number of sessions to keep in memory
+MAX_SESSIONS = 50
+
 @method_decorator(csrf_exempt, name='dispatch')
 class ChatView(APIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     def post(self, request):
+        # Clear old sessions if we have too many
+        if len(session_history) > MAX_SESSIONS:
+            print(f"Clearing old sessions. Current count: {len(session_history)}")
+            # Keep only the 10 most recent sessions
+            recent_sessions = dict(list(session_history.items())[-10:])
+            session_history.clear()
+            session_history.update(recent_sessions)
+            print(f"Sessions after cleanup: {len(session_history)}")
+        
         session_id = request.data.get('session_id') or str(uuid4())
         user_message = request.data.get('message', '').strip()
         image_file = request.FILES.get('image', None)
@@ -73,9 +85,12 @@ class ChatView(APIView):
             session_history[session_id] = [system_message] + history_body
 
             # Debug
-            print("\nSession ID:", session_id)
-            import json
-            print(json.dumps(session_history[session_id], indent=2))
+            print(f"\nSession ID: {session_id}")
+            print(f"Total sessions in memory: {len(session_history)}")
+            print(f"Messages in current session: {len(session_history[session_id])}")
+            # Uncomment the line below if you want to see the full conversation
+            # import json
+            # print(json.dumps(session_history[session_id], indent=2))
 
             # Call OpenAI
             response = openai.ChatCompletion.create(
