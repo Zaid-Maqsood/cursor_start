@@ -15,13 +15,9 @@ openai.api_key = config('OPENAI_API_KEY')
 # Temporary in-memory session store (for dev/testing only)
 session_history = {}
 
-# Limit to last 10 exchanges to avoid "message too long"
-MAX_EXCHANGES = 15
-
 # Maximum number of sessions to keep in memory
-MAX_SESSIONS = 50
+MAX_SESSIONS = 20
 
-@method_decorator(csrf_exempt, name='dispatch')
 class ChatView(APIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
@@ -70,33 +66,15 @@ class ChatView(APIView):
                 "content": user_content
             })
 
-            # Truncate history to avoid "message too long" error
-            # Keep system message and limit to last MAX_EXCHANGES pairs
-            system_message = session_history[session_id][0]  # keep system prompt
-            history_body = session_history[session_id][1:]  # all messages after system
-            
-            # Calculate how many complete exchanges we can keep
-            max_messages = MAX_EXCHANGES * 2  # user + assistant pairs
-            
-            if len(history_body) > max_messages:
-                # Keep the most recent messages
-                history_body = history_body[-max_messages:]
-            
-            session_history[session_id] = [system_message] + history_body
-
             # Debug
             print(f"\nSession ID: {session_id}")
             print(f"Total sessions in memory: {len(session_history)}")
             print(f"Messages in current session: {len(session_history[session_id])}")
-            # Uncomment the line below if you want to see the full conversation
-            # import json
-            # print(json.dumps(session_history[session_id], indent=2))
 
             # Call OpenAI
             response = openai.ChatCompletion.create(
                 model="gpt-4o",
-                messages=session_history[session_id],
-                max_tokens=1000
+                messages=session_history[session_id]
             )
 
             assistant_message = response.choices[0].message
