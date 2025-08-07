@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
-import 'session_manager.dart'; // Make sure this exists and provides a persistent sessionId
+import 'session_manager.dart';
 
 // Platform-specific imports
 import 'dart:html' as html show FileUploadInputElement, FileReader, File;
@@ -27,6 +27,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Uint8List? _imageBytes;
   String? _imageName;
   String? _imageContentType;
+  
+  // Medical PDF variables
+  Uint8List? _medicalPdfBytes;
+  String? _medicalPdfName;
+  html.File? _webMedicalPdfFile;
+  io.File? _mobileMedicalPdfFile;
+  bool _hasMedicalReport = false;
   
   // Mobile-specific variables  
   io.File? _mobileImageFile;
@@ -87,7 +94,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  // Helper function to determine content type from file extension
   String _getContentType(String fileName) {
     final extension = fileName.split('.').last.toLowerCase();
     switch (extension) {
@@ -101,13 +107,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       case 'webp':
         return 'image/webp';
       default:
-        return 'image/jpeg'; // Default fallback
+        return 'image/jpeg';
     }
   }
 
   Future<void> _pickImage() async {
     if (kIsWeb) {
-      // Web implementation
       final uploadInput = html.FileUploadInputElement();
       uploadInput.accept = 'image/*';
       uploadInput.click();
@@ -123,17 +128,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             _imageBytes = reader.result as Uint8List;
             _imageName = file.name;
             _imageContentType = file.type.isNotEmpty ? file.type : _getContentType(file.name);
-            // Clear mobile variables
             _mobileImageFile = null;
           });
         });
       });
     } else {
-      // Mobile implementation
       try {
         final XFile? pickedFile = await _picker.pickImage(
           source: ImageSource.gallery,
-          imageQuality: 85, // Reduce quality to avoid large files
+          imageQuality: 85,
         );
         
         if (pickedFile != null) {
@@ -143,18 +146,73 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             _imageBytes = bytes;
             _imageName = pickedFile.name;
             _imageContentType = pickedFile.mimeType ?? _getContentType(pickedFile.name);
-            // Clear web variables
             _webImageFile = null;
           });
         }
       } catch (e) {
         print('Error picking image: $e');
-        // Show error to user
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error selecting image: $e')),
         );
       }
     }
+  }
+
+  Future<void> _pickMedicalReport() async {
+    if (kIsWeb) {
+      final uploadInput = html.FileUploadInputElement();
+      uploadInput.accept = '.pdf,application/pdf';
+      uploadInput.click();
+
+      uploadInput.onChange.listen((e) {
+        final file = uploadInput.files!.first;
+        final reader = html.FileReader();
+        reader.readAsArrayBuffer(file);
+
+        reader.onLoadEnd.listen((event) {
+          setState(() {
+            _webMedicalPdfFile = file;
+            _medicalPdfBytes = reader.result as Uint8List;
+            _medicalPdfName = file.name;
+            _hasMedicalReport = true;
+          });
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Medical report uploaded: ${file.name}'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        });
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('PDF upload is currently available on web only'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _clearMedicalReport() {
+    setState(() {
+      _webMedicalPdfFile = null;
+      _mobileMedicalPdfFile = null;
+      _medicalPdfBytes = null;
+      _medicalPdfName = null;
+      _hasMedicalReport = false;
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Medical report cleared'),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _sendMessage() async {
@@ -170,49 +228,55 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     try {
       var request = http.MultipartRequest('POST', backendUrl);
       
-      // Add text message - your backend expects 'message' field
       request.fields['message'] = message;
-      
-      // Add session ID - your backend expects 'session_id' field
       request.fields['session_id'] = SessionManager.sessionId;
 
-      // Handle image upload based on platform
+      // Add medical PDF if present
+      if (_medicalPdfBytes != null) {
+        final stream = http.ByteStream.fromBytes(_medicalPdfBytes!);
+        final length = _medicalPdfBytes!.length;
+        request.files.add(http.MultipartFile(
+          'medical_report',
+          stream,
+          length,
+          filename: _medicalPdfName ?? 'medical_report.pdf',
+          contentType: MediaType.parse('application/pdf'),
+        ));
+      }
+
+      // Handle image upload
       if (kIsWeb && _webImageFile != null && _imageBytes != null) {
-        // Web implementation - use ByteStream
         final stream = http.ByteStream.fromBytes(_imageBytes!);
         final length = _imageBytes!.length;
         request.files.add(http.MultipartFile(
-          'image', // Your backend expects 'image' field
+          'image',
           stream,
           length,
           filename: _imageName ?? 'image.jpg',
           contentType: MediaType.parse(_imageContentType ?? 'image/jpeg'),
         ));
       } else if (!kIsWeb && _mobileImageFile != null) {
-        // Mobile implementation - use fromPath
         request.files.add(await http.MultipartFile.fromPath(
-          'image', // Your backend expects 'image' field  
+          'image',
           _mobileImageFile!.path,
           contentType: MediaType.parse(_imageContentType ?? 'image/jpeg'),
           filename: _imageName,
         ));
       }
 
-      // Add user message to chat before sending
       setState(() {
         _messages.add({
           'role': 'user', 
           'content': message.isEmpty ? 'Analyze this image' : message, 
-          'image': _imageBytes
+          'image': _imageBytes,
+          'hasMedicalReport': _hasMedicalReport,
         });
         _controller.clear();
         _clearImageSelection();
       });
 
-      // Scroll to bottom after adding user message
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
-      // Send request to your backend
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
 
@@ -221,11 +285,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         setState(() {
           _messages.add({
             'role': 'ai', 
-            'content': data['response'] ?? 'No response received'
+            'content': data['response'] ?? 'No response received',
+            'medical_context_used': data['medical_context_used'] ?? false,
           });
         });
         
-        // Update session ID if backend provides a new one
         if (data['session_id'] != null && data['session_id'] != SessionManager.sessionId) {
           SessionManager.setSessionId(data['session_id']);
         }
@@ -251,7 +315,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _isSending = false;
       });
       
-      // Scroll to bottom after AI response
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
   }
@@ -332,6 +395,42 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 child: Column(
                   crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                   children: [
+                    if (isUser && message['hasMedicalReport'] == true)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '📋 Medical report included',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.green[700],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    
+                    if (!isUser && message['medical_context_used'] == true)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '🏥 Personalized advice',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.blue[700],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    
                     if (message['image'] != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8.0),
@@ -382,6 +481,43 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMedicalReportCard() {
+    if (!_hasMedicalReport) return const SizedBox.shrink();
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.8)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.medical_services_rounded, color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Medical report: ${_medicalPdfName ?? "Uploaded"}',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w500,
+                fontSize: 14,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, color: Colors.white, size: 16),
+            onPressed: _clearMedicalReport,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+          ),
         ],
       ),
     );
@@ -463,6 +599,35 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               _buildFeatureChip("🥗 Nutrition Facts"),
             ],
           ),
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _pickMedicalReport,
+              icon: Icon(Icons.medical_services_rounded, color: Colors.white),
+              label: Text(
+                'Upload Medical Report (PDF)',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green[600],
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Upload your medical report for personalized health advice",
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[500],
+            ),
+            textAlign: TextAlign.center,
+          ),
         ],
       ),
     );
@@ -510,16 +675,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
     final isMobile = screenWidth < 600;
     final isTablet = screenWidth >= 600 && screenWidth < 1024;
     final isDesktop = screenWidth >= 1024;
 
-    // Responsive values
     final double maxChatWidth = isMobile ? screenWidth : (isTablet ? 700 : 900);
     final double maxBubbleWidth = maxChatWidth * (isMobile ? 0.85 : 0.7);
     final double fontSize = isMobile ? 15 : (isTablet ? 16 : 17);
-    final double titleFontSize = isMobile ? 28 : (isTablet ? 32 : 36);
     final double sidebarWidth = isDesktop ? 250 : (isTablet ? 200 : 0);
 
     return Scaffold(
@@ -578,6 +740,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ],
         ),
         actions: [
+          IconButton(
+            icon: Icon(
+              _hasMedicalReport ? Icons.medical_services_rounded : Icons.medical_services_outlined,
+              color: _hasMedicalReport ? Colors.green : Colors.white,
+            ),
+            onPressed: _pickMedicalReport,
+            tooltip: 'Upload Medical Report',
+          ),
           if (!isMobile)
             IconButton(
               icon: const Icon(Icons.settings_rounded, color: Colors.white),
@@ -613,20 +783,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               position: _slideAnimation,
               child: Row(
                 children: [
-                  // Left Sidebar (Desktop/Tablet only)
                   if (!isMobile) ...[
                     SizedBox(width: sidebarWidth),
                     _buildSeparator(),
                   ],
                   
-                  // Main Chat Area
                   Expanded(
                     child: Center(
                       child: ConstrainedBox(
                         constraints: BoxConstraints(maxWidth: maxChatWidth),
                         child: Column(
                           children: [
-                            // Chat Messages
+                            _buildMedicalReportCard(),
+                            
                             Expanded(
                               child: _messages.isEmpty
                                   ? SingleChildScrollView(
@@ -645,7 +814,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                     ),
                             ),
                             
-                            // Selected Image Preview
                             if (_imageBytes != null)
                               Container(
                                 margin: const EdgeInsets.all(16),
@@ -697,7 +865,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                 ),
                               ),
                             
-                            // Input Area
                             Container(
                               margin: EdgeInsets.symmetric(
                                 horizontal: isMobile ? 16 : 24,
@@ -793,7 +960,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     ),
                   ),
                   
-                  // Right Sidebar (Desktop/Tablet only)
                   if (!isMobile) ...[
                     _buildSeparator(),
                     SizedBox(width: sidebarWidth),
@@ -806,4 +972,4 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       ),
     );
   }
-}
+} 
