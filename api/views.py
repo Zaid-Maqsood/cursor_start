@@ -10,6 +10,7 @@ from uuid import uuid4
 from decouple import config
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from .pinecone_utils import get_pinecone_manager
 
 
 openai.api_key = config('OPENAI_API_KEY')
@@ -261,3 +262,188 @@ Keep the response clear and concise."""
             summary_parts.append(f"Allergies: {', '.join(allergies)}")
         
         return "; ".join(summary_parts) if summary_parts else "No specific medical information available"
+
+
+class VectorSearchView(APIView):
+    """View for vector search operations using Pinecone"""
+    
+    def post(self, request):
+        """Store vectors and perform similarity search"""
+        try:
+            action = request.data.get('action')
+            
+            if action == 'store':
+                return self._store_vectors(request)
+            elif action == 'search':
+                return self._search_vectors(request)
+            elif action == 'stats':
+                return self._get_stats(request)
+            else:
+                return Response({
+                    'error': 'Invalid action. Use "store", "search", or "stats"'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response({
+                'error': f'Vector search error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _store_vectors(self, request):
+        """Store vectors in Pinecone"""
+        vectors_data = request.data.get('vectors', [])
+        
+        if not vectors_data:
+            return Response({
+                'error': 'No vectors provided'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            manager = get_pinecone_manager()
+            
+            # Ensure index exists
+            manager.create_index_if_not_exists(dimension=1536, metric="cosine")
+            
+            # Store vectors
+            success = manager.upsert_vectors(vectors_data)
+            
+            if success:
+                return Response({
+                    'message': f'Successfully stored {len(vectors_data)} vectors',
+                    'vectors_stored': len(vectors_data)
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'error': 'Failed to store vectors'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            return Response({
+                'error': f'Error storing vectors: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _search_vectors(self, request):
+        """Search for similar vectors"""
+        query_vector = request.data.get('query_vector')
+        top_k = request.data.get('top_k', 5)
+        filter_dict = request.data.get('filter', None)
+        
+        if not query_vector:
+            return Response({
+                'error': 'No query vector provided'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            manager = get_pinecone_manager()
+            
+            # Perform search
+            results = manager.query_vectors(
+                query_vector=query_vector,
+                top_k=top_k,
+                include_metadata=True,
+                filter=filter_dict
+            )
+            
+            # Format results
+            formatted_results = []
+            for match in results:
+                formatted_results.append({
+                    'id': match.id,
+                    'score': match.score,
+                    'metadata': match.metadata
+                })
+            
+            return Response({
+                'results': formatted_results,
+                'total_matches': len(formatted_results)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error searching vectors: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_stats(self, request):
+        """Get Pinecone index statistics"""
+        try:
+            manager = get_pinecone_manager()
+            stats = manager.get_index_stats()
+            
+            return Response({
+                'stats': stats
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error getting stats: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class VectorDemoView(APIView):
+    """Demo view to show how to use Pinecone with OpenAI embeddings"""
+    
+    def post(self, request):
+        """Demo: Store text embeddings and search"""
+        try:
+            texts = request.data.get('texts', [])
+            query_text = request.data.get('query_text', '')
+            
+            if not texts:
+                return Response({
+                    'error': 'No texts provided for embedding'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Generate embeddings using OpenAI (still using text-embedding-ada-002 for compatibility)
+            embeddings = []
+            for i, text in enumerate(texts):
+                response = openai.Embedding.create(
+                    input=text,
+                    model="text-embedding-ada-002"
+                )
+                embedding = response['data'][0]['embedding']
+                
+                embeddings.append({
+                    'id': f'text-{i}',
+                    'values': embedding,
+                    'metadata': {
+                        'text': text,
+                        'source': 'demo'
+                    }
+                })
+            
+            # Store in Pinecone
+            manager = get_pinecone_manager()
+            manager.create_index_if_not_exists()
+            manager.upsert_vectors(embeddings)
+            
+            # Search if query provided
+            search_results = []
+            if query_text:
+                # Generate query embedding
+                query_response = openai.Embedding.create(
+                    input=query_text,
+                    model="text-embedding-ada-002"
+                )
+                query_embedding = query_response['data'][0]['embedding']
+                
+                # Search
+                results = manager.query_vectors(query_embedding, top_k=3)
+                search_results = [
+                    {
+                        'id': match.id,
+                        'score': match.score,
+                        'text': match.metadata.get('text', ''),
+                        'metadata': match.metadata
+                    }
+                    for match in results
+                ]
+            
+            return Response({
+                'message': f'Stored {len(texts)} text embeddings',
+                'texts_stored': texts,
+                'search_results': search_results if search_results else None
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Demo error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

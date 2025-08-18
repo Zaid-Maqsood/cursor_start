@@ -49,7 +49,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  final Uri backendUrl = Uri.parse("https://zaidmaq.pythonanywhere.com/api/chat/");
+  final Uri backendUrl = Uri.parse("http://127.0.0.1:8000/api/chat/");
 
   @override
   void initState() {
@@ -226,7 +226,35 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final message = _controller.text.trim();
 
     try {
+      // Get Firebase ID token for authentication
+      String? idToken;
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          idToken = await user.getIdToken();
+        } else {
+          setState(() {
+            _messages.add({
+              'role': 'ai', 
+              'content': 'Authentication error: Please log in again 🔐'
+            });
+          });
+          return;
+        }
+      } catch (e) {
+        setState(() {
+          _messages.add({
+            'role': 'ai', 
+              'content': 'Authentication error: Please log in again 🔐'
+          });
+        });
+        return;
+      }
+
       var request = http.MultipartRequest('POST', backendUrl);
+      
+      // Add Authorization header with Firebase ID token
+      request.headers['Authorization'] = 'Bearer $idToken';
       
       request.fields['message'] = message;
       request.fields['session_id'] = SessionManager.sessionId;

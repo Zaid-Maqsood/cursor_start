@@ -150,3 +150,11 @@ CORS_ALLOW_ALL_ORIGINS = True
 # settings.py
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# Pinecone Configuration
+PINECONE_API_KEY = config('PINECONE_API_KEY', default='')
+PINECONE_ENVIRONMENT = config('PINECONE_ENVIRONMENT', default='us-east-1-aws')
+PINECONE_INDEX_NAME = config('PINECONE_INDEX_NAME', default='chatbot-index')
+
+# Firebase Configuration
+FIREBASE_SERVICE_ACCOUNT_KEY = config('FIREBASE_SERVICE_ACCOUNT_KEY', default='')
