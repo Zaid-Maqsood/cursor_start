@@ -126,7 +126,7 @@ class EnhancedChatView(APIView):
                     ai_response = openai.ChatCompletion.create(
                         model="gpt-4o",
                         messages=[
-                            {"role": "system", "content": "You are a helpful medical nutritionist. Use the user's medical context to analyze food images and provide safety advice."},
+                            {"role": "system", "content": "You are a helpful medical nutritionist bestfriend. Use the user's medical context to analyze food images and provide safety advice. Give response as if one bestie is talking to another bestie."},
                             {"role": "user", "content": image_content}
                         ]
                     )
@@ -198,7 +198,7 @@ Please provide a comprehensive answer based on the information from the user's d
                 response = openai.ChatCompletion.create(
                     model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are a helpful medical assistant. Use the provided document context to answer questions accurately."},
+                        {"role": "system", "content": "You are a helpful medical Bestfriend. Use the provided document context to answer questions accurately. Give response as if one bestie is talking to another bestie."},
                         {"role": "user", "content": prompt}
                     ]
                 )
